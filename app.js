@@ -10,7 +10,7 @@ async function loadAssets(){
 }
 function tidy(value){return String(value||'').trim().replace(/\s+/g,' ');}
 function fit(font,value,size,width,min=9){let s=size;while(font.widthOfTextAtSize(value,s)>width&&s>min)s-=.25;if(font.widthOfTextAtSize(value,s)>width)throw Error('Текст слишком длинный для шаблона. Сократите имя или адрес сайта.');return s;}
-function ensureCharacters(font,value){const available=new Set(font.getCharacterSet());for(const char of value){if(!available.has(char.codePointAt(0)))throw Error('В данных есть символ, который не поддерживает шрифт. Уберите эмодзи и специальные знаки.');}}
+function ensureCharacters(font,value){const available=new Set(font.getCharacterSet());for(const char of value){if('\n\r\t'.includes(char))continue;if(!available.has(char.codePointAt(0)))throw Error('В данных есть символ, который не поддерживает шрифт. Уберите эмодзи и специальные знаки.');}}
 function draw(page,value,{x,baseline,size,width,font,color,center=false}){if(!value)return;ensureCharacters(font,value);const s=fit(font,value,size,width);const xx=center?x-font.widthOfTextAtSize(value,s)/2:x;page.drawText(value,{x:xx,y:540-baseline,size:s,font,color});}
 form.addEventListener('input',()=>{if(!result.hidden){result.hidden=true;status.textContent='Данные изменены. Сформируйте PDF заново.';status.className='status';}});
 form.addEventListener('submit',async event=>{
@@ -18,9 +18,11 @@ form.addEventListener('submit',async event=>{
  const data=new FormData(form);const client=tidy(data.get('client'));const manager=tidy(data.get('manager'));const amount=Number(data.get('amount'));const phone=tidy(data.get('phone'));const website=tidy(data.get('website'));const reviews=tidy(data.get('reviews'));
  if(!client||!manager){status.textContent='Укажите имя клиента и менеджера.';status.className='status error';return;}
  if(!Number.isFinite(amount)||amount<1||amount>999999999){status.textContent='Укажите стоимость от 1 до 999 999 999 ₽.';status.className='status error';return;}
- button.disabled=true;button.textContent='Готовим PDF…';status.className='status';status.textContent='Загружаем шаблон и подставляем данные…';result.hidden=true;
+ const controls=Array.from(form.elements).map(element=>({element,disabled:element.disabled}));for(const {element} of controls)element.disabled=true;
+ button.textContent='Готовим PDF…';status.className='status';status.textContent='Загружаем шаблон и подставляем данные…';result.hidden=true;
  try{
-  if(!window.PDFLib||!window.fontkit)throw Error('Не загрузились компоненты генератора. Обновите страницу и попробуйте снова.');
+  if(!window.PDFLib||!window.fontkit||!window.ProjectSection)throw Error('Не загрузились компоненты генератора. Обновите страницу и попробуйте снова.');
+  const project=await window.ProjectSection.read(data);
   const [template,regularBytes,boldBytes]=await loadAssets();
   const {PDFDocument,rgb}=window.PDFLib;const pdf=await PDFDocument.load(template.slice(0));pdf.registerFontkit(window.fontkit);
   const regular=await pdf.embedFont(regularBytes.slice(0),{subset:true});const bold=await pdf.embedFont(boldBytes.slice(0),{subset:true});
@@ -35,12 +37,13 @@ form.addEventListener('submit',async event=>{
   draw(pages[8],'Ваш менеджер: '+manager,{x:186.26,baseline:445.5,size:12,width:390,font:bold,color:ink});
   draw(pages[8],phone?'тел. '+phone:'',{x:186.26,baseline:460,size:12,width:390,font:regular,color:ink});
   draw(pages[8],website,{x:186.26,baseline:474.4,size:12,width:390,font:regular,color:ink});
+  await window.ProjectSection.render(pdf,project,{regular,bold,client,price,ensureCharacters,fit});
   pdf.setTitle('Коммерческое предложение — '+client);pdf.setAuthor('Фабрика стильных лестниц');pdf.setSubject('Лестница «Империя»');pdf.setProducer('Генератор КП — ручное заполнение');pdf.setCreator('Фабрика стильных лестниц');
   const bytes=await pdf.save();const blob=new Blob([bytes],{type:'application/pdf'});if(currentUrl)URL.revokeObjectURL(currentUrl);currentUrl=URL.createObjectURL(blob);
   const safeClient=client.replace(/[<>:"/\\|?*\x00-\x1f]/g,'').slice(0,55);const download=document.querySelector('#download');download.href=currentUrl;download.download='КП-Империя-'+safeClient+'.pdf';document.querySelector('#open-pdf').href=currentUrl;
-  document.querySelector('#result-description').textContent=client+' · '+price+' · 9 страниц';result.hidden=false;status.textContent='PDF сформирован. Скачайте его или откройте для проверки.';
+  document.querySelector('#result-description').textContent=client+' · '+price+' · Страниц: '+pdf.getPageCount();result.hidden=false;status.textContent='PDF сформирован. Скачайте его или откройте для проверки.';
   download.click();
  }catch(error){status.textContent=error instanceof Error?error.message:'Не удалось сформировать PDF. Попробуйте ещё раз.';status.className='status error';}
- finally{button.disabled=false;button.textContent='Сформировать PDF';}
+ finally{for(const {element,disabled} of controls)element.disabled=disabled;button.textContent='Сформировать PDF';}
 });
 window.addEventListener('pagehide',()=>{if(currentUrl)URL.revokeObjectURL(currentUrl);});
